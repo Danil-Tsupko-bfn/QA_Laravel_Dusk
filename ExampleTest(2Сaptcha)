@@ -1,0 +1,96 @@
+З 2Сaptcha 
+
+<?php
+
+namespace Tests\Browser;
+
+use Laravel\Dusk\Browser;
+use Tests\DuskTestCase;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
+
+class ExampleTest extends DuskTestCase
+{
+    public function testChatGPTInteraction()
+    {
+        $this->browse(function (Browser $browser) {
+            $loginEmail = env('CHATGPT_EMAIL');
+            $loginPassword = env('CHATGPT_PASSWORD');
+
+            $browser->visit('https://chat.openai.com/')
+                ->pause(10000) 
+                ->screenshot('before-login') 
+                ->waitUntil('document.readyState === "complete"', 30) 
+                ->waitForText('Log in', 60) // Збільшено час очікування
+                ->clickLink('Log in')
+                ->pause(2000)
+                ->waitForText('Continue with email', 30)
+                ->click('@email-login-button')
+                ->type('email', $loginEmail)
+                ->press('Continue')
+                ->waitForText('Enter your password', 30)
+                ->type('password', $loginPassword)
+                ->press('Continue')
+                ->pause(10000); 
+
+            $siteKey = $browser->attribute('iframe', 'data-sitekey');
+
+            $captchaToken = $this->solveCaptcha($siteKey, $browser->driver->getCurrentURL());
+
+            $browser->script("
+                document.querySelector('textarea[name=\"cf-turnstile-response\"]').value = '$captchaToken';
+            ");
+            $browser->pause(2000);
+
+            $browser->press('Submit')
+                ->waitFor('textarea', 30) 
+                ->type('textarea', 'What is Laravel Dusk?')
+                ->press('Send')
+                ->waitFor('.response-text', 30);
+
+            $responseText = $browser->text('.response-text');
+            Log::info('ChatGPT Response: ' . $responseText);
+        });
+    }
+
+    /**
+     * Метод для розв'язання Cloudflare Turnstile капчі за допомогою 2captcha
+     */
+    public function solveCaptcha($siteKey, $url)
+    {
+        $apiKey = env('CAPTCHA_API_KEY'); // API-ключ для 2captcha
+
+        $response = Http::post('http://2captcha.com/in.php', [
+            'key' => $apiKey,
+            'method' => 'turnstile',
+            'sitekey' => $siteKey,
+            'pageurl' => $url,
+            'json' => 1
+        ]);
+
+        $requestResult = $response->json();
+
+        if ($requestResult['status'] !== 1) {
+            throw new \Exception('Failed to send captcha to 2captcha: ' . $requestResult['request']);
+        }
+
+        $captchaId = $requestResult['request'];
+
+        for ($i = 0; $i < 10; $i++) {
+            sleep(5); // Чекаємо 5 секунд між запитами
+
+            $result = Http::get('http://2captcha.com/res.php', [
+                'key' => $apiKey,
+                'action' => 'get',
+                'id' => $captchaId,
+                'json' => 1
+            ])->json();
+
+            if ($result['status'] === 1) {
+                return $result['request']; // Токен розв'язаної капчі
+            }
+        }
+
+        throw new \Exception('Failed to solve captcha.');
+    }
+}
