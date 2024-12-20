@@ -1,0 +1,68 @@
+Не працює , але пробував
+
+<?php
+
+namespace Tests\Browser;
+
+use Laravel\Dusk\Browser;
+use Tests\DuskTestCase;
+use Illuminate\Support\Facades\Log;
+
+class ExampleTest extends DuskTestCase
+{
+    public function solveCaptchaTurnstile($siteKey, $url)
+    {
+        $solver = new \TwoCaptcha\TwoCaptcha('b4a532653b5d8e552c9e7f24d3ee42b7');
+        $result = $solver->turnstile([
+            'sitekey' => $siteKey,
+            'url' => $url,
+        ]);
+
+        return $result['code'];
+    }
+    public function testChatGPTInteraction()
+    {
+        $this->browse(function (Browser $browser) {
+            $loginEmail = env('CHATGPT_EMAIL');
+            $loginPassword = env('CHATGPT_PASSWORD');
+
+            $browser->visit('https://chat.openai.com/')
+                ->pause(5000) 
+                ->waitFor('iframe[name="cf-turnstile"]', 30) 
+                ->screenshot('before-captcha');
+
+            $browser->switchTo()->frame('cf-turnstile');
+
+            $siteKey = $browser->attribute('iframe', 'data-sitekey');
+            $captchaToken = $this->solveCaptchaTurnstile($siteKey, $browser->driver->getCurrentURL());
+
+            $browser->script("
+        document.querySelector('textarea[name=\"cf-turnstile-response\"]').value = '$captchaToken';
+    ");
+
+            $browser->pause(3000)
+                ->press('Submit') 
+                ->waitForText('Log in', 60) /
+                ->clickLink('Log in')
+                ->pause(2000)
+                ->waitForText('Continue with email', 30)
+                ->click('@email-login-button')
+                ->type('email', $loginEmail)
+                ->press('Continue')
+                ->waitForText('Enter your password', 30)
+                ->type('password', $loginPassword)
+                ->press('Continue')
+                ->pause(10000);
+
+            $browser->waitFor('textarea', 30)
+                ->type('textarea', 'What is Laravel Dusk?')
+                ->press('Send')
+                ->waitFor('.response-text', 30);
+
+            $responseText = $browser->text('.response-text');
+            Log::info('ChatGPT Response: ' . $responseText);
+        });
+    }
+
+
+}
